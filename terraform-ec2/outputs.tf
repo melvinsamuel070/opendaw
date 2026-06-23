@@ -2,6 +2,7 @@ output "instance_id" {
   value = module.ec2.instance_id
 }
 
-output "public_ip" {
+# CHANGE: rename public_ip to instance_public_ip
+output "instance_public_ip" {
   value = module.ec2.public_ip
 }
