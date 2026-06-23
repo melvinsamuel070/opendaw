@@ -3,5 +3,5 @@ output "instance_id" {
 }
 
 output "instance_public_ip" {
-  value = aws_instance.this[0].instance_public_ip
+  value = aws_instance.this[0].public_ip
 }
