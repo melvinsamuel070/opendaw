@@ -144,10 +144,10 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # Mapping host 8080 to container 443 where your custom Nginx configuration runs HTTPS
+      # Mapping host 8080 to container port 80 (matching HTTP-only container config)
       - name: Pull and run image locally
         run: |
-          docker run -d --name smoke-test-app -p 8080:443 \
+          docker run -d --name smoke-test-app -p 8080:80 \
             ${{ secrets.DOCKERHUB_USERNAME }}/${{ secrets.DOCKERHUB_IMAGE_NAME }}:${{ needs.build-and-push.outputs.image_tag }}
 
       - name: Wait for container to be ready
@@ -161,13 +161,13 @@ jobs:
             exit 1
           fi
 
-      # Passing -k/--insecure flags since the container utilizes localhost self-signed certificates
+      # Reverting check to plain HTTP over port 8080 to avoid handshake timeouts (Exit code 35)
       - name: Curl the app to confirm it responds
         run: |
-          STATUS=$(curl -k -s -o /dev/null -w "%{http_code}" https://localhost:8080)
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080)
           echo "HTTP Status: $STATUS"
           if [ "$STATUS" != "200" ]; then
-            echo "App did not respond with 200 over HTTPS!"
+            echo "App did not respond with 200!"
             docker logs smoke-test-app
             exit 1
           fi
@@ -234,10 +234,10 @@ jobs:
             docker stop my-production-app || true
             docker rm my-production-app || true
 
-            # 4. Spin up container on port 8080 targeting inner port 443
+            # 4. Spin up container on port 8080 targeting inner container port 80
             docker run -d \
               --name my-production-app \
-              -p 127.0.0.1:8080:443 \
+              -p 127.0.0.1:8080:80 \
               --restart always \
               ${{ secrets.DOCKERHUB_USERNAME }}/${{ secrets.DOCKERHUB_IMAGE_NAME }}:${{ needs.build-and-push.outputs.image_tag }}
 
@@ -249,8 +249,8 @@ jobs:
               exit 1
             fi
 
-            # 6. Confirm it's responding on internal port 8080 via HTTPS
-            STATUS=$(curl -k -s -o /dev/null -w "%{http_code}" https://127.0.0.1:8080)
+            # 6. Confirm it's responding internally over plain HTTP
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8080)
             echo "App HTTP Status: $STATUS"
             if [ "$STATUS" != "200" ]; then
               echo "App is not responding with 200!"
@@ -258,7 +258,7 @@ jobs:
               exit 1
             fi
 
-            # 7. Clean up host Nginx packages, image history, and log out securely
+            # 7. Configure host reverse-proxy environment, image housekeeping, and log out
             sudo apt update && sudo apt install -y nginx
             docker image prune -f
             docker logout
