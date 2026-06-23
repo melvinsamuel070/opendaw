@@ -258,12 +258,24 @@ jobs:
             sudo docker stop my-production-app || true
             sudo docker rm my-production-app || true
 
-            # 4. Spin up container on port 8080 targeting inner container port 80
+            # # 4. Spin up container on port 8080 targeting inner container port 80
+            # sudo docker run -d \
+            #   --name my-production-app \
+            #   -p 127.0.0.1:8080:80 \
+            #   --restart always \
+            #   ${{ secrets.DOCKERHUB_USERNAME }}/${{ secrets.DOCKERHUB_IMAGE_NAME }}:${{ needs.build-and-push.outputs.image_tag }}
+
+
+              # 4. Spin up container on port 8080 targeting inner container port 80 for testing
             sudo docker run -d \
               --name my-production-app \
-              -p 127.0.0.1:8080:80 \
+              -p 8080:80 \
               --restart always \
               ${{ secrets.DOCKERHUB_USERNAME }}/${{ secrets.DOCKERHUB_IMAGE_NAME }}:${{ needs.build-and-push.outputs.image_tag }}
+
+
+
+
 
             # 5. Wait briefly then verify it's actually running
             sleep 5
