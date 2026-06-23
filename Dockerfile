@@ -12,17 +12,13 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Copy configuration files first to take advantage of Docker layer caching
-COPY package*.json turbo.json ./
-COPY packages/app/studio/package.json ./packages/app/studio/
-COPY packages/studio/core/package.json ./packages/studio/core/
+# Copy the entire monorepo so npm workspaces can resolve all internal package links
+COPY . .
 
 # Install the monorepo dependencies
 RUN npm install
 
-# Copy the rest of the source code and build the static studio assets
-COPY . .
-# RUN npm run build
+# Build only the studio app and its actual dependency graph
 RUN npx turbo run build --filter=@opendaw/app-studio
 
 # --- Stage 2: Production Web Server (Final Image) ---
@@ -31,7 +27,10 @@ FROM nginx:alpine AS runner
 # Copy the statically compiled bundle out of the builder stage
 COPY --from=builder /app/packages/app/studio/dist /usr/share/nginx/html
 
-# Expose HTTPS port
-EXPOSE 443
+# Bake in the Nginx config (COOP/COEP headers, SPA routing, MIME types)
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+
+# Expose HTTP port (SSL is terminated by host-level Nginx/Certbot in production)
+EXPOSE 80
 
 CMD ["nginx", "-g", "daemon off;"]
