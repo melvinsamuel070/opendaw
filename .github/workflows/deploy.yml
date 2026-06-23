@@ -195,12 +195,17 @@ jobs:
           aws-region: ${{ secrets.AWS_REGION }}
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
+      
+      # Enforcing non-interactive runs to ensure background prompt glitches are caught immediately
       - name: Terraform Init
         working-directory: ./terraform-ec2
-        run: terraform init
+        run: terraform init -input=false
+      
+      # Passing explicit variable configurations inline to resolve hanging workflows
       - name: Terraform Apply
         working-directory: ./terraform-ec2
-        run: terraform apply -auto-approve
+        run: terraform apply -auto-approve -input=false -var="instance_name=opendaw-production-ec2"
+      
       - name: Get EC2 IP from Output
         id: tf_output
         working-directory: ./terraform-ec2
