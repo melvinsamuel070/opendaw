@@ -272,7 +272,6 @@ jobs:
               sudo docker logs my-production-app
               exit 1
             fi
-
             # 6. Confirm it's responding internally over plain HTTP
             STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8080)
             echo "App HTTP Status: $STATUS"
