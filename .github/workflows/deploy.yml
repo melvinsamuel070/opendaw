@@ -211,7 +211,7 @@ jobs:
         id: tf_output
         working-directory: ./terraform-ec2
         run: |
-          IP=$(terraform output -raw public_ip)
+          IP=$(terraform output -raw instance_public_ip)
           echo "ip=$IP" >> "$GITHUB_OUTPUT"
 
   # ==========================================
