@@ -69,6 +69,283 @@
 
 
 
+# name: Build, Test, Push & Deploy openDAW
+# on:
+#   push:
+#     branches: [master]
+#   workflow_dispatch:
+# jobs:
+#   # ==========================================
+#   # 1 TEST PHASE
+#   # ==========================================
+#   test:
+#     runs-on: ubuntu-latest
+#     steps:
+#       - name: Checkout Code
+#         uses: actions/checkout@v4
+
+#       - name: Setup Node.js
+#         uses: actions/setup-node@v4
+#         with:
+#           node-version: '23'
+
+#       - name: Install dependencies
+#         run: npm install
+
+#       - name: Run build (acts as compile-time test)
+#         run: npm run build
+
+#       - name: Run unit/lint tests (if defined)
+#         run: npm test --if-present
+
+#   # ==========================================
+#   # 2. BUILD & PUSH PHASE
+#   # ==========================================
+#   build-and-push:
+#     runs-on: ubuntu-latest
+#     needs: test
+#     outputs:
+#       image_tag: ${{ steps.meta.outputs.tag }}
+#     steps:
+#       - name: Checkout Code
+#         uses: actions/checkout@v4
+#       - name: Set image tag
+#         id: meta
+#         run: echo "tag=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+#       - name: Log in to Docker Hub
+#         uses: docker/login-action@v3
+#         with:
+#           username: ${{ secrets.DOCKERHUB_USERNAME }}
+#           password: ${{ secrets.DOCKERHUB_TOKEN }}
+#       - name: Set up Docker Buildx
+#         uses: docker/setup-buildx-action@v3
+#       - name: Build and push image
+#         uses: docker/build-push-action@v6
+#         with:
+#           context: .
+#           file: ./Dockerfile
+#           push: true
+#           tags: |
+#             ${{ secrets.DOCKERHUB_USERNAME }}/${{ secrets.DOCKERHUB_IMAGE_NAME }}:latest
+#             ${{ secrets.DOCKERHUB_USERNAME }}/${{ secrets.DOCKERHUB_IMAGE_NAME }}:${{ steps.meta.outputs.tag }}
+#           cache-from: type=gha
+#           cache-to: type=gha,mode=max
+
+#   # ==========================================
+#   # 3. CONTAINER SMOKE TEST
+#   # ==========================================
+#   smoke-test:
+#     runs-on: ubuntu-latest
+#     needs: build-and-push
+#     steps:
+#       - name: Log in to Docker Hub
+#         uses: docker/login-action@v3
+#         with:
+#           username: ${{ secrets.DOCKERHUB_USERNAME }}
+#           password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+#       # Mapping host 8080 to container port 80 (matching HTTP-only container config)
+#       - name: Pull and run image locally
+#         run: |
+#           docker run -d --name smoke-test-app -p 8080:80 \
+#             ${{ secrets.DOCKERHUB_USERNAME }}/${{ secrets.DOCKERHUB_IMAGE_NAME }}:${{ needs.build-and-push.outputs.image_tag }}
+
+#       - name: Wait for container to be ready
+#         run: sleep 5
+
+#       - name: Check container is still running
+#         run: |
+#           if [ "$(docker inspect -f '{{.State.Running}}' smoke-test-app)" != "true" ]; then
+#             echo "Container exited unexpectedly!"
+#             docker logs smoke-test-app
+#             exit 1
+#           fi
+
+#       # Reverting check to plain HTTP over port 8080 to avoid handshake timeouts (Exit code 35)
+#       - name: Curl the app to confirm it responds
+#         run: |
+#           STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080)
+#           echo "HTTP Status: $STATUS"
+#           if [ "$STATUS" != "200" ]; then
+#             echo "App did not respond with 200!"
+#             docker logs smoke-test-app
+#             exit 1
+#           fi
+
+#       - name: Clean up smoke test container
+#         if: always()
+#         run: docker stop smoke-test-app && docker rm smoke-test-app
+
+#   # ==========================================
+#   # 4. RUN TERRAFORM & GET IP
+#   # ==========================================
+#   terraform:
+#     runs-on: ubuntu-latest
+#     needs: smoke-test
+#     outputs:
+#       ec2_ip: ${{ steps.tf_output.outputs.ip }}
+#     steps:
+#       - name: Checkout Code
+#         uses: actions/checkout@v4
+#       - name: Configure AWS credentials
+#         uses: aws-actions/configure-aws-credentials@v4
+#         with:
+#           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+#           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+#           aws-region: ${{ secrets.AWS_REGION }}
+#       - name: Setup Terraform
+#         uses: hashicorp/setup-terraform@v3
+      
+#       # Enforcing non-interactive runs to ensure background prompt glitches are caught immediately
+#       - name: Terraform Init
+#         working-directory: ./terraform-ec2
+#         run: terraform init -input=false
+      
+#       # Passing explicit variable configurations inline to resolve hanging workflows
+#       # Note: Reverted output back to public_ip to match root outputs.tf definition
+#       - name: Terraform Apply
+#         working-directory: ./terraform-ec2
+#         run: terraform apply -auto-approve -input=false -var="instance_name=opendaw-production-ec2"
+      
+#       - name: Get EC2 IP from Output
+#         id: tf_output
+#         working-directory: ./terraform-ec2
+#         run: |
+#           IP=$(terraform output -raw instance_public_ip)
+#           echo "ip=$IP" >> "$GITHUB_OUTPUT"
+
+#   # ==========================================
+#   # 5. SSH & DEPLOY TO PRODUCTION
+#   # ==========================================
+#   deploy:
+#     runs-on: ubuntu-latest
+#     needs: [build-and-push, terraform]
+#     steps:
+#       - name: SSH into Instance & Deploy App
+#         uses: appleboy/ssh-action@v1.0.3
+#         with:
+#           host: ${{ needs.terraform.outputs.ec2_ip }}
+#           username: ubuntu
+#           key: ${{ secrets.SSH_PRIVATE_KEY }}
+#           script: |
+#             echo "Connected via SSH!"
+
+#             # --- Wait for UserData Docker Installation to Finish ---
+#             echo "Waiting for cloud-init / Docker installation to complete..."
+#             for i in {1..30}; do
+#               if command -v docker &> /dev/null && sudo systemctl is-active --quiet docker; then
+#                 echo "Docker is installed and running!"
+#                 break
+#               fi
+#               echo "Docker not ready yet. Retrying in 5 seconds... ($i/30)"
+#               sleep 5
+#             done
+
+#             # Verify docker works before continuing
+#             if ! command -v docker &> /dev/null; then
+#               echo "❌ Error: Docker installation timed out!"
+#               exit 1
+#             fi
+
+#             # Explicit sudo usage ensures permissions function immediately without SSH reconnect delays
+#             # 1. Log in to Docker registry inside the instance
+#             echo "${{ secrets.DOCKERHUB_TOKEN }}" | sudo docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+
+#             # 2. Pull the newly built image tag
+#             sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/${{ secrets.DOCKERHUB_IMAGE_NAME }}:${{ needs.build-and-push.outputs.image_tag }}
+
+#             # 3. Clean up the old container instance
+#             sudo docker stop my-production-app || true
+#             sudo docker rm my-production-app || true
+
+#             # # 4. Spin up container on port 8080 targeting inner container port 80
+#             # sudo docker run -d \
+#             #   --name my-production-app \
+#             #   -p 127.0.0.1:8080:80 \
+#             #   --restart always \
+#             #   ${{ secrets.DOCKERHUB_USERNAME }}/${{ secrets.DOCKERHUB_IMAGE_NAME }}:${{ needs.build-and-push.outputs.image_tag }}
+
+
+#               # 4. Spin up container on port 8080 targeting inner container port 80 for testing
+#             sudo docker run -d \
+#               --name my-production-app \
+#               -p 8080:80 \
+#               --restart always \
+#               ${{ secrets.DOCKERHUB_USERNAME }}/${{ secrets.DOCKERHUB_IMAGE_NAME }}:${{ needs.build-and-push.outputs.image_tag }}
+
+
+
+
+
+#             # 5. Wait briefly then verify it's actually running
+#             sleep 5
+#             if [ "$(sudo docker inspect -f '{{.State.Running}}' my-production-app)" != "true" ]; then
+#               echo "Production container failed to start!"
+#               sudo docker logs my-production-app
+#               exit 1
+#             fi
+#             # 6. Confirm it's responding internally over plain HTTP
+#             STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8080)
+#             echo "App HTTP Status: $STATUS"
+#             if [ "$STATUS" != "200" ]; then
+#               echo "App is not responding with 200!"
+#               sudo docker logs my-production-app
+#               exit 1
+#             fi
+
+#             # 7. Housekeeping and cleanup
+#             sudo docker image prune -f
+#             sudo docker logout
+#             echo "✅ Deployment completed and verified running!"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 name: Build, Test, Push & Deploy openDAW
 on:
   push:
@@ -195,18 +472,18 @@ jobs:
           aws-region: ${{ secrets.AWS_REGION }}
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
-      
+
       # Enforcing non-interactive runs to ensure background prompt glitches are caught immediately
       - name: Terraform Init
         working-directory: ./terraform-ec2
         run: terraform init -input=false
-      
+
       # Passing explicit variable configurations inline to resolve hanging workflows
       # Note: Reverted output back to public_ip to match root outputs.tf definition
       - name: Terraform Apply
         working-directory: ./terraform-ec2
         run: terraform apply -auto-approve -input=false -var="instance_name=opendaw-production-ec2"
-      
+
       - name: Get EC2 IP from Output
         id: tf_output
         working-directory: ./terraform-ec2
@@ -221,6 +498,33 @@ jobs:
     runs-on: ubuntu-latest
     needs: [build-and-push, terraform]
     steps:
+      - name: Setup DuckDNS Dynamic IP Updater
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ needs.terraform.outputs.ec2_ip }}
+          username: ubuntu
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            echo "Configuring DuckDNS updater..."
+
+            mkdir -p ~/duckdns
+
+            cat > ~/duckdns/duck.sh <<'EOF'
+            echo url="https://www.duckdns.org/update?domains=${{ secrets.DUCKDNS_SUBDOMAIN }}&token=${{ secrets.DUCKDNS_TOKEN }}&ip=" | curl -k -o ~/duckdns/duck.log -K -
+            EOF
+
+            chmod 700 ~/duckdns/duck.sh
+
+            # Run it once immediately to update the IP right now
+            ~/duckdns/duck.sh
+            cat ~/duckdns/duck.log
+
+            # Add to crontab only if not already present (idempotent)
+            CRON_JOB="*/5 * * * * ~/duckdns/duck.sh >/dev/null 2>&1"
+            ( crontab -l 2>/dev/null | grep -v -F "duck.sh" ; echo "$CRON_JOB" ) | crontab -
+
+            echo "✅ DuckDNS updater configured and scheduled."
+
       - name: SSH into Instance & Deploy App
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -243,7 +547,7 @@ jobs:
 
             # Verify docker works before continuing
             if ! command -v docker &> /dev/null; then
-              echo "❌ Error: Docker installation timed out!"
+              echo "Error: Docker installation timed out!"
               exit 1
             fi
 
@@ -257,24 +561,22 @@ jobs:
             # 3. Clean up the old container instance
             sudo docker stop my-production-app || true
             sudo docker rm my-production-app || true
+            
 
-            # # 4. Spin up container on port 8080 targeting inner container port 80
+            # # 4. Spin up container on port 8080 targeting inner container port 80 for testing
             # sudo docker run -d \
             #   --name my-production-app \
-            #   -p 127.0.0.1:8080:80 \
+            #   -p 8080:80 \
             #   --restart always \
             #   ${{ secrets.DOCKERHUB_USERNAME }}/${{ secrets.DOCKERHUB_IMAGE_NAME }}:${{ needs.build-and-push.outputs.image_tag }}
 
 
-              # 4. Spin up container on port 8080 targeting inner container port 80 for testing
-            sudo docker run -d \
+             # 4. Spin up the container on port 8080 internally for host Nginx
+            docker run -d \
               --name my-production-app \
-              -p 8080:80 \
+              -p 127.0.0.1:8080:80 \
               --restart always \
               ${{ secrets.DOCKERHUB_USERNAME }}/${{ secrets.DOCKERHUB_IMAGE_NAME }}:${{ needs.build-and-push.outputs.image_tag }}
-
-
-
 
 
             # 5. Wait briefly then verify it's actually running
@@ -284,6 +586,7 @@ jobs:
               sudo docker logs my-production-app
               exit 1
             fi
+
             # 6. Confirm it's responding internally over plain HTTP
             STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8080)
             echo "App HTTP Status: $STATUS"
@@ -296,4 +599,4 @@ jobs:
             # 7. Housekeeping and cleanup
             sudo docker image prune -f
             sudo docker logout
-            echo "✅ Deployment completed and verified running!"
+            echo "Deployment completed and verified running!"
