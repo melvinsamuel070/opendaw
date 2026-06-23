@@ -1,20 +1,20 @@
 variable "ami_id" {
-type = string
+  type = string
 }
 
 variable "instance_name" {
-type = string
+  type = string
 }
 
 variable "instance_type" {
-type = string
+  type = string
 }
 
 variable "key_name" {
-type = string
+  type = string
 }
 
 variable "instance_count" {
-type    = number
-default = 1
+  type    = number
+  default = 1
 }
