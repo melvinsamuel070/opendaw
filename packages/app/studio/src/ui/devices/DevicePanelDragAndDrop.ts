@@ -1,0 +1,221 @@
+import {asDefined, isAbsent, isDefined, panic, RuntimeNotifier, Terminable, UUID} from "@opendaw/lib-std"
+import {Promises} from "@opendaw/lib-runtime"
+import {DragAndDrop} from "@/ui/DragAndDrop"
+import {AnyDragData} from "@/ui/AnyDragData"
+import {
+    AudioBusBoxAdapter,
+    AudioUnitBoxAdapter,
+    Devices,
+    InstrumentBox,
+    InstrumentFactories,
+    InstrumentFactory,
+    PresetDecoder,
+    PresetHeader
+} from "@opendaw/studio-adapters"
+import {InsertMarker} from "@/ui/components/InsertMarker"
+import {EffectFactories, PresetSource, Project} from "@opendaw/studio-core"
+import {PresetApplication} from "@/ui/browse/PresetApplication"
+import {IndexedBox} from "@opendaw/lib-box"
+import {AudioUnitBox} from "@opendaw/studio-boxes"
+
+export namespace DevicePanelDragAndDrop {
+    export const install = (project: Project,
+                            editors: HTMLElement,
+                            midiEffectsContainer: HTMLElement,
+                            instrumentContainer: HTMLElement,
+                            audioEffectsContainer: HTMLElement): Terminable => {
+        const insertMarker: HTMLElement = InsertMarker()
+        const {editing, boxAdapters, userEditingManager} = project
+        return DragAndDrop.installTarget(editors, {
+            drag: (event: DragEvent, dragData: AnyDragData): boolean => {
+                instrumentContainer.style.opacity = "1.0"
+                const editingDeviceChain = userEditingManager.audioUnit.get()
+                if (editingDeviceChain.isEmpty()) {return false}
+                const deviceHost = boxAdapters.adapterFor(editingDeviceChain.unwrap().box, Devices.isHost)
+                const {type} = dragData
+                if (type === "preset") {
+                    if (dragData.category === "audio-unit" && deviceHost.isAudioUnit) {
+                        instrumentContainer.style.opacity = "0.5"
+                        return true
+                    }
+                    if (dragData.category === "instrument" && deviceHost.isAudioUnit
+                        && !deviceHost.inputAdapter.mapOr(input => input instanceof AudioBusBoxAdapter, false)) {
+                        instrumentContainer.style.opacity = "0.5"
+                        return true
+                    }
+                    if (dragData.category === "audio-effect" || dragData.category === "audio-effect-chain") {
+                        const [_index, successor] = DragAndDrop.findInsertLocation(event, audioEffectsContainer)
+                        audioEffectsContainer.insertBefore(insertMarker, successor)
+                        return true
+                    }
+                    if (dragData.category === "midi-effect" || dragData.category === "midi-effect-chain") {
+                        if (deviceHost.inputAdapter.mapOr(input => input.accepts !== "midi", true)) {return false}
+                        const [_index, successor] = DragAndDrop.findInsertLocation(event, midiEffectsContainer)
+                        midiEffectsContainer.insertBefore(insertMarker, successor)
+                        return true
+                    }
+                    return false
+                }
+                let container: HTMLElement
+                if (type === "audio-effect") {
+                    container = audioEffectsContainer
+                } else if (type === "midi-effect") {
+                    if (deviceHost.inputAdapter.mapOr(input => input.accepts !== "midi", true)) {
+                        return false
+                    }
+                    container = midiEffectsContainer
+                } else if (type === "instrument" && deviceHost.isAudioUnit) {
+                    if (dragData.device === null) {return false}
+                    if (deviceHost.inputAdapter.mapOr(input => input instanceof AudioBusBoxAdapter, false)) {
+                        return false
+                    }
+                    instrumentContainer.style.opacity = "0.5"
+                    return true
+                } else {
+                    return false
+                }
+                const [_index, successor] = DragAndDrop.findInsertLocation(event, container)
+                container.insertBefore(insertMarker, successor)
+                return true
+            },
+            drop: (event: DragEvent, dragData: AnyDragData): void => {
+                instrumentContainer.style.opacity = "1.0"
+                if (insertMarker.isConnected) {insertMarker.remove()}
+                const {type} = dragData
+                if (type === "preset") {
+                    const dropIndex = dragData.category === "audio-effect" || dragData.category === "audio-effect-chain"
+                        ? DragAndDrop.findInsertLocation(event, audioEffectsContainer)[0]
+                        : dragData.category === "midi-effect" || dragData.category === "midi-effect-chain"
+                            ? DragAndDrop.findInsertLocation(event, midiEffectsContainer)[0]
+                            : 0
+                    handlePresetDrop(project, dragData, dropIndex).catch(console.warn)
+                    return
+                }
+                if (type !== "midi-effect" && type !== "audio-effect" && type !== "instrument") {return}
+                const editingDeviceChain = userEditingManager.audioUnit.get()
+                if (editingDeviceChain.isEmpty()) {return}
+                const deviceHost = boxAdapters.adapterFor(editingDeviceChain.unwrap("editingDeviceChain isEmpty").box, Devices.isHost)
+                if (type === "instrument" && deviceHost instanceof AudioUnitBoxAdapter) {
+                    if (dragData.device === null) {return}
+                    const inputBox = deviceHost.inputField.pointerHub.incoming().at(0)?.box
+                    if (isAbsent(inputBox)) {
+                        console.warn("No instrument to replace")
+                        return
+                    }
+                    const namedElement = InstrumentFactories.Named[dragData.device]
+                    const factory = asDefined(namedElement, `Unknown: '${dragData.device}'`) as InstrumentFactory
+                    editing.modify(() => {
+                        const attempt = project.api.replaceMIDIInstrument(inputBox as InstrumentBox, factory)
+                        if (attempt.isFailure()) {console.debug(attempt.failureReason())}
+                    })
+                    return
+                }
+                let container: HTMLElement
+                let field
+                if (type === "audio-effect") {
+                    container = audioEffectsContainer
+                    field = deviceHost.audioEffects.field()
+                } else if (type === "midi-effect") {
+                    container = midiEffectsContainer
+                    field = deviceHost.midiEffects.field()
+                } else {
+                    return panic(`Unknown type: ${type}`)
+                }
+                const [index] = DragAndDrop.findInsertLocation(event, container)
+                if (dragData.uuids === null) {
+                    editing.modify(() => {
+                        const factory = EffectFactories.MergedNamed[dragData.device]
+                        project.api.insertEffect(field, factory, index)
+                    })
+                } else {
+                    const uuids = dragData.uuids
+                    if (uuids.length === 0) {return}
+                    const startIndices = uuids
+                        .map(uuidStr => project.boxGraph.findBox(UUID.parse(uuidStr)).unwrapOrNull())
+                        .filter(isDefined)
+                        .filter(IndexedBox.isIndexedBox)
+                        .map(box => box.index.getValue())
+                        .toSorted((a, b) => a - b)
+                    if (startIndices.length === 0) {return}
+                    editing.modify(() => IndexedBox.moveIndices(field, startIndices, index))
+                }
+            },
+            enter: () => {},
+            leave: () => {
+                instrumentContainer.style.opacity = "1.0"
+                if (insertMarker.isConnected) {insertMarker.remove()}
+            }
+        })
+    }
+
+    const resolveKeepTimeline = async (bytes: ArrayBuffer, targetAudioUnit: AudioUnitBox): Promise<boolean | "abort"> => {
+        const sourceHasTimeline = PresetDecoder.peekHasTimeline(bytes)
+        const targetHasTimeline = targetAudioUnit.tracks.pointerHub.incoming().length > 0
+        if (!sourceHasTimeline) {return true}
+        if (!targetHasTimeline) {return false}
+        const replace = await Promises.tryCatch(RuntimeNotifier.approve({
+            headline: "Replace Timeline?",
+            message: "This preset includes timeline content (clips, regions, automation). "
+                + "Replace the existing timeline on this audio unit, or keep your current one?",
+            approveText: "Replace",
+            cancelText: "Keep"
+        }))
+        if (replace.status === "rejected") {return "abort"}
+        return !replace.value
+    }
+
+    const handlePresetDrop = async (project: Project,
+                                    dragData: { category: string, source: PresetSource, uuid: UUID.String },
+                                    dropIndex: number): Promise<void> => {
+        const editing = project.userEditingManager.audioUnit.get()
+        if (editing.isEmpty()) {return}
+        const targetAudioUnit = project.boxAdapters
+            .adapterFor(editing.unwrap().box, Devices.isHost).audioUnitBoxAdapter().box
+        const load = await Promises.tryCatch(PresetApplication.loadBytes(dragData.uuid, dragData.source))
+        if (load.status === "rejected") {
+            console.warn(load.error)
+            RuntimeNotifier.notify({message: "Cannot load preset.", icon: "Warning"})
+            return
+        }
+        if (dragData.category === "audio-unit") {
+            const keepTimeline = await resolveKeepTimeline(load.value, targetAudioUnit)
+            if (keepTimeline === "abort") {return}
+            project.editing.modify(() => {
+                const attempt = PresetDecoder.replaceAudioUnit(load.value, targetAudioUnit, {keepTimeline})
+                if (attempt.isFailure()) {
+                    RuntimeNotifier.notify({message: "Cannot apply preset.", icon: "Warning"})
+                }
+            })
+            project.loadScriptDevices()
+            return
+        }
+        if (dragData.category === "instrument") {
+            const keepTimeline = await resolveKeepTimeline(load.value, targetAudioUnit)
+            if (keepTimeline === "abort") {return}
+            project.editing.modify(() => {
+                const attempt = PresetDecoder.replaceAudioUnit(load.value, targetAudioUnit,
+                    {keepMIDIEffects: true, keepAudioEffects: true, keepTimeline})
+                if (attempt.isFailure()) {
+                    RuntimeNotifier.notify({message: "Cannot apply preset.", icon: "Warning"})
+                }
+            })
+            project.loadScriptDevices()
+            return
+        }
+        if (dragData.category === "audio-effect" || dragData.category === "midi-effect"
+            || dragData.category === "audio-effect-chain" || dragData.category === "midi-effect-chain") {
+            const chainKind = dragData.category === "midi-effect" || dragData.category === "midi-effect-chain"
+                ? PresetHeader.ChainKind.Midi
+                : PresetHeader.ChainKind.Audio
+            project.editing.modify(() => {
+                const attempt = PresetDecoder.insertEffectChain(load.value, targetAudioUnit, dropIndex, chainKind)
+                if (attempt.isFailure()) {
+                    RuntimeNotifier.notify({message: "Cannot apply preset.", icon: "Warning"})
+                }
+            })
+            project.loadScriptDevices()
+            return
+        }
+        console.debug(`Preset drop for category '${dragData.category}' not yet implemented`)
+    }
+}

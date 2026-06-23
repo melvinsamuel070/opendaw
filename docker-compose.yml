@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  opendaw-studio:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: opendaw-studio:latest
+    container_name: opendaw_web_studio
+    ports:
+      - "8080:443" # Maps host port 8080 to container HTTPS port 443
+    volumes:
+      # Mount your local host certificates directly into the Nginx container
+      - ./certs/localhost.pem:/etc/nginx/certs/localhost.pem:ro
+      - ./certs/localhost-key.pem:/etc/nginx/certs/localhost-key.pem:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    restart: unless-stopped

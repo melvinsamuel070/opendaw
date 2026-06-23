@@ -1,0 +1,312 @@
+import {BoxGraph} from "./graph"
+import {
+    Arrays,
+    assert,
+    Editing,
+    int,
+    Maybe,
+    Notifier,
+    Observer,
+    Option,
+    RuntimeNotifier,
+    Subscription,
+    SyncProvider,
+    tryCatch,
+    UUID
+} from "@opendaw/lib-std"
+import {DeleteUpdate, NewUpdate, PointerUpdate, PrimitiveUpdate, Update} from "./updates"
+
+// Removes updates for boxes that were created AND deleted in the same transaction.
+export const optimizeUpdates = (updates: ReadonlyArray<Update>): ReadonlyArray<Update> => {
+    const createdUuids = UUID.newSet<UUID.Bytes>(uuid => uuid)
+    const deletedUuids = UUID.newSet<UUID.Bytes>(uuid => uuid)
+    for (const update of updates) {
+        if (update instanceof NewUpdate) {
+            createdUuids.add(update.uuid)
+        } else if (update instanceof DeleteUpdate) {
+            deletedUuids.add(update.uuid)
+        }
+    }
+    const phantomUuids = UUID.newSet<UUID.Bytes>(uuid => uuid)
+    for (const uuid of createdUuids.values()) {
+        if (deletedUuids.hasKey(uuid)) {
+            phantomUuids.add(uuid)
+        }
+    }
+    if (phantomUuids.isEmpty()) {return updates}
+    return updates.filter(update => {
+        if (update instanceof NewUpdate || update instanceof DeleteUpdate) {
+            return !phantomUuids.hasKey(update.uuid)
+        } else if (update instanceof PointerUpdate || update instanceof PrimitiveUpdate) {
+            return !phantomUuids.hasKey(update.address.uuid)
+        }
+        return true
+    })
+}
+
+class Modification {
+    readonly #updates: ReadonlyArray<Update>
+
+    constructor(updates: ReadonlyArray<Update>) {this.#updates = updates}
+
+    inverse(graph: BoxGraph): void {
+        graph.beginTransaction()
+        this.#updates.toReversed().forEach(update => update.inverse(graph))
+        graph.endTransaction()
+    }
+
+    forward(graph: BoxGraph): void {
+        graph.beginTransaction()
+        this.#updates.forEach(update => update.forward(graph))
+        graph.endTransaction()
+    }
+}
+
+export interface ModificationProcess {
+    approve(): void
+    revert(): void
+}
+
+export class BoxEditing implements Editing {
+    readonly #graph: BoxGraph
+    readonly #pending: Array<Modification> = []
+    readonly #marked: Array<ReadonlyArray<Modification>> = []
+    readonly #notifier: Notifier<void>
+
+    #modifying: boolean = false
+    #inProcess: boolean = false
+    #disabled: boolean = false
+    #historyIndex: int = 0
+    #savedHistoryIndex: int = 0 // -1 = saved state was spliced away, >= 0 = valid saved position
+
+    constructor(graph: BoxGraph) {
+        this.#graph = graph
+
+        this.#notifier = new Notifier<void>()
+    }
+
+    get graph(): BoxGraph {return this.#graph}
+
+    subscribe(observer: Observer<void>): Subscription {
+        return this.#notifier.subscribe(observer)
+    }
+
+    markSaved(): void {
+        if (this.#pending.length > 0) {this.mark()}
+        this.#savedHistoryIndex = this.#historyIndex
+    }
+
+    hasUnsavedChanges(): boolean {
+        if (this.#pending.length > 0) {return true}
+        if (this.#savedHistoryIndex === -1) {return true}
+        return this.#historyIndex !== this.#savedHistoryIndex
+    }
+
+    hasNoChanges(): boolean {return this.#marked.length === 0 && this.#pending.length === 0}
+
+    clear(): void {
+        assert(!this.#modifying, "Already modifying")
+        Arrays.clear(this.#pending)
+        Arrays.clear(this.#marked)
+        this.#historyIndex = 0
+        this.#savedHistoryIndex = 0
+        this.#notifier.notify()
+    }
+
+    undo(): boolean {
+        if (!this.canUndo()) {return false}
+        if (this.#pending.length > 0) {this.mark()}
+        console.debug("undo")
+        const modifications = this.#marked[--this.#historyIndex]
+        const reversed = modifications.toReversed()
+        const applied: Array<Modification> = []
+        for (const step of reversed) {
+            const result = tryCatch(() => step.inverse(this.#graph))
+            if (result.status === "failure") {
+                if (this.#graph.inTransaction()) {this.#graph.abortTransaction()}
+                applied.toReversed().forEach(completed => completed.forward(this.#graph))
+                this.#historyIndex++
+                RuntimeNotifier.notify({message: "History changed by another participant.", icon: "Info"})
+                return false
+            }
+            applied.push(step)
+        }
+        this.#notifier.notify()
+        return true
+    }
+
+    redo(): boolean {
+        if (!this.canRedo()) {return false}
+        console.debug("redo")
+        const modifications = this.#marked[this.#historyIndex++]
+        const applied: Array<Modification> = []
+        for (const step of modifications) {
+            const result = tryCatch(() => step.forward(this.#graph))
+            if (result.status === "failure") {
+                if (this.#graph.inTransaction()) {this.#graph.abortTransaction()}
+                applied.toReversed().forEach(completed => completed.inverse(this.#graph))
+                this.#historyIndex--
+                RuntimeNotifier.notify({message: "History changed by another participant.", icon: "Info"})
+                return false
+            }
+            applied.push(step)
+        }
+        this.#notifier.notify()
+        return true
+    }
+
+    canUndo(): boolean {
+        if (this.#disabled) {return false}
+        return this.#historyIndex !== 0 || this.#pending.length > 0
+    }
+
+    canRedo(): boolean {
+        if (this.#disabled) {return false}
+        if (this.#historyIndex === this.#marked.length) {return false}
+        return this.#pending.length <= 0
+    }
+
+    modify<R>(modifier: SyncProvider<Maybe<R>>, mark: boolean = true): Option<R> {
+        assert(!this.#inProcess, "Cannot call modify while a modification process is running")
+        if (this.#modifying || this.#graph.inTransaction()) {
+            this.#notifier.notify()
+            return Option.wrap(modifier())
+        }
+        if (mark && this.#pending.length > 0) {this.mark()}
+        this.#modifying = true
+        const updates: Array<Update> = []
+        const subscription = this.#graph.subscribeToAllUpdates({
+            onUpdate: (update: Update) => updates.push(update)
+        })
+        const result = tryCatch(() => {
+            this.#graph.beginTransaction()
+            const result = modifier()
+            this.#graph.endTransaction()
+            return result
+        })
+        subscription.terminate()
+        this.#modifying = false
+        if (result.status === "failure") {
+            if (this.#graph.inTransaction()) {this.#graph.abortTransaction()}
+            throw result.error
+        }
+        const optimized = optimizeUpdates(updates)
+        if (optimized.length > 0) {
+            this.#pending.push(new Modification(optimized))
+        }
+        if (mark) {this.mark()}
+        this.#notifier.notify()
+        return Option.wrap(result.value)
+    }
+
+    append<R>(modifier: SyncProvider<Maybe<R>>): Option<R> {
+        assert(!this.#inProcess, "Cannot call append while a modification process is running")
+        if (this.#modifying || this.#graph.inTransaction()) {
+            this.#notifier.notify()
+            return Option.wrap(modifier())
+        }
+        if (this.#pending.length > 0) {
+            if (this.#historyIndex > 0) {
+                this.#marked[this.#historyIndex - 1] =
+                    [...this.#marked[this.#historyIndex - 1], ...this.#pending.splice(0)]
+            } else {
+                this.mark()
+            }
+        }
+        this.#modifying = true
+        const updates: Array<Update> = []
+        const subscription = this.#graph.subscribeToAllUpdates({
+            onUpdate: (update: Update) => updates.push(update)
+        })
+        const result = tryCatch(() => {
+            this.#graph.beginTransaction()
+            const result = modifier()
+            this.#graph.endTransaction()
+            return result
+        })
+        subscription.terminate()
+        this.#modifying = false
+        if (result.status === "failure") {
+            if (this.#graph.inTransaction()) {this.#graph.abortTransaction()}
+            throw result.error
+        }
+        const optimized = optimizeUpdates(updates)
+        if (optimized.length > 0) {
+            const modification = new Modification(optimized)
+            if (this.#historyIndex > 0) {
+                if (this.#marked.length > this.#historyIndex) {
+                    if (this.#savedHistoryIndex > this.#historyIndex) {
+                        this.#savedHistoryIndex = -1
+                    }
+                    this.#marked.splice(this.#historyIndex)
+                }
+                this.#marked[this.#historyIndex - 1] =
+                    [...this.#marked[this.#historyIndex - 1], modification]
+            } else {
+                this.#marked.push([modification])
+                this.#historyIndex = this.#marked.length
+            }
+        }
+        this.#notifier.notify()
+        return Option.wrap(result.value)
+    }
+
+    beginModification(): ModificationProcess {
+        assert(!this.#modifying && !this.#inProcess, "Cannot begin modification while another is in progress")
+        this.#modifying = true
+        this.#inProcess = true
+        const updates: Array<Update> = []
+        const subscription = this.#graph.subscribeToAllUpdates({
+            onUpdate: (update: Update) => updates.push(update)
+        })
+        this.#graph.beginTransaction()
+        const cleanup = () => {
+            subscription.terminate()
+            this.#modifying = false
+            this.#inProcess = false
+        }
+        return {
+            approve: () => {
+                const result = tryCatch(() => this.#graph.endTransaction())
+                cleanup()
+                if (result.status === "failure") {throw result.error}
+                const optimized = optimizeUpdates(updates)
+                if (optimized.length > 0) {
+                    this.#pending.push(new Modification(optimized))
+                }
+                this.mark()
+                this.#notifier.notify()
+            },
+            revert: () => {
+                const result = tryCatch(() => this.#graph.endTransaction())
+                cleanup()
+                if (result.status === "success" && updates.length > 0) {
+                    new Modification(updates).inverse(this.#graph)
+                }
+            }
+        }
+    }
+
+    mark(): void {
+        if (this.#pending.length === 0) {return}
+        if (this.#marked.length - this.#historyIndex > 0) {
+            if (this.#savedHistoryIndex > this.#historyIndex) {
+                this.#savedHistoryIndex = -1
+            }
+            this.#marked.splice(this.#historyIndex)
+        }
+        this.#marked.push(this.#pending.splice(0))
+        this.#historyIndex = this.#marked.length
+    }
+
+    revertPending(): void {
+        if (this.#pending.length === 0) {return}
+        this.#pending.reverse().forEach(modification => modification.inverse(this.#graph))
+        this.#pending.length = 0
+        this.#notifier.notify()
+    }
+
+    disable(): void {
+        this.#disabled = true
+    }
+}

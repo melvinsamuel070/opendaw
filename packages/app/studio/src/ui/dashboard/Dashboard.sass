@@ -1,0 +1,47 @@
+@use "@/colors"
+
+component
+  flex: 1
+  display: flex
+  flex-direction: column
+  align-items: center
+  justify-content: center
+  font-size: 1.125em
+  @include colors.panel-background
+
+  .highlight
+    color: rgba(black, 0.8)
+    background-color: var(--color-red)
+    border-radius: 2px
+    padding: 0 2px
+
+  > article
+    display: flex
+    flex-direction: column
+    width: 720px
+    color: var(--color-dark)
+
+    > h1, h2
+      color: white
+      font-size: 2.25em
+
+    > h1
+      margin-left: -3px
+      margin-bottom: 2px
+
+    > h2
+      font-size: 1.125em
+      color: var(--color-blue)
+
+    p, ul
+      margin: 0.3em 0
+      font-size: 13px
+
+    a
+      color: var(--color-blue)
+
+    > div.columns
+      margin: 1em 0 0 0
+      display: grid
+      column-gap: 0.5em
+      grid-template-columns: 1fr 1fr
