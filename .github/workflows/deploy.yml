@@ -202,6 +202,7 @@ jobs:
         run: terraform init -input=false
       
       # Passing explicit variable configurations inline to resolve hanging workflows
+      # Note: Reverted output back to public_ip to match root outputs.tf definition
       - name: Terraform Apply
         working-directory: ./terraform-ec2
         run: terraform apply -auto-approve -input=false -var="instance_name=opendaw-production-ec2"
@@ -210,7 +211,7 @@ jobs:
         id: tf_output
         working-directory: ./terraform-ec2
         run: |
-          IP=$(terraform output -raw instance_public_ip)
+          IP=$(terraform output -raw public_ip)
           echo "ip=$IP" >> "$GITHUB_OUTPUT"
 
   # ==========================================
@@ -229,18 +230,36 @@ jobs:
           script: |
             echo "Connected via SSH!"
 
+            # --- Wait for UserData Docker Installation to Finish ---
+            echo "Waiting for cloud-init / Docker installation to complete..."
+            for i in {1..30}; do
+              if command -v docker &> /dev/null && sudo systemctl is-active --quiet docker; then
+                echo "Docker is installed and running!"
+                break
+              fi
+              echo "Docker not ready yet. Retrying in 5 seconds... ($i/30)"
+              sleep 5
+            done
+
+            # Verify docker works before continuing
+            if ! command -v docker &> /dev/null; then
+              echo "❌ Error: Docker installation timed out!"
+              exit 1
+            fi
+
+            # Explicit sudo usage ensures permissions function immediately without SSH reconnect delays
             # 1. Log in to Docker registry inside the instance
-            echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+            echo "${{ secrets.DOCKERHUB_TOKEN }}" | sudo docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
 
             # 2. Pull the newly built image tag
-            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/${{ secrets.DOCKERHUB_IMAGE_NAME }}:${{ needs.build-and-push.outputs.image_tag }}
+            sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/${{ secrets.DOCKERHUB_IMAGE_NAME }}:${{ needs.build-and-push.outputs.image_tag }}
 
             # 3. Clean up the old container instance
-            docker stop my-production-app || true
-            docker rm my-production-app || true
+            sudo docker stop my-production-app || true
+            sudo docker rm my-production-app || true
 
             # 4. Spin up container on port 8080 targeting inner container port 80
-            docker run -d \
+            sudo docker run -d \
               --name my-production-app \
               -p 127.0.0.1:8080:80 \
               --restart always \
@@ -248,9 +267,9 @@ jobs:
 
             # 5. Wait briefly then verify it's actually running
             sleep 5
-            if [ "$(docker inspect -f '{{.State.Running}}' my-production-app)" != "true" ]; then
+            if [ "$(sudo docker inspect -f '{{.State.Running}}' my-production-app)" != "true" ]; then
               echo "Production container failed to start!"
-              docker logs my-production-app
+              sudo docker logs my-production-app
               exit 1
             fi
 
@@ -259,10 +278,11 @@ jobs:
             echo "App HTTP Status: $STATUS"
             if [ "$STATUS" != "200" ]; then
               echo "App is not responding with 200!"
-              docker logs my-production-app
+              sudo docker logs my-production-app
               exit 1
             fi
 
-            docker image prune -f
-            docker logout
+            # 7. Housekeeping and cleanup
+            sudo docker image prune -f
+            sudo docker logout
             echo "✅ Deployment completed and verified running!"
