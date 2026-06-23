@@ -263,8 +263,6 @@ jobs:
               exit 1
             fi
 
-            # 7. Configure host reverse-proxy environment, image housekeeping, and log out
-            sudo apt update && sudo apt install -y nginx
             docker image prune -f
             docker logout
             echo "✅ Deployment completed and verified running!"

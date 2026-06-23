@@ -45,6 +45,9 @@ resource "aws_instance" "this" {
   key_name               = var.key_name
   vpc_security_group_ids = [aws_security_group.ec2_sg.id]
 
+  # 👇 ADD THIS LINE TO BAKE IN DOCKER ON BOOT
+  user_data = file("${path.root}/userdata.sh")
+
   root_block_device {
     volume_size = 8
     volume_type = "gp3"
