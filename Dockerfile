@@ -22,7 +22,8 @@ RUN npm install
 
 # Copy the rest of the source code and build the static studio assets
 COPY . .
-RUN npm run build
+# RUN npm run build
+RUN npx turbo run build --filter=@opendaw/app-studio
 
 # --- Stage 2: Production Web Server (Final Image) ---
 FROM nginx:alpine AS runner
