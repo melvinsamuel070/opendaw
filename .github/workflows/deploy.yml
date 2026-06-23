@@ -78,7 +78,7 @@ on:
   workflow_dispatch:
 jobs:
   # ==========================================
-  # 1. TEST PHASE
+  # 1 TEST PHASE
   # ==========================================
   test:
     runs-on: ubuntu-latest
