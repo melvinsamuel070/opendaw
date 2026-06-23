@@ -69,8 +69,6 @@
 
 
 
-
-
 name: Build, Test, Push & Deploy openDAW
 on:
   push:
@@ -146,9 +144,10 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      # Mapping host 8080 to container 443 where your custom Nginx configuration runs HTTPS
       - name: Pull and run image locally
         run: |
-          docker run -d --name smoke-test-app -p 8080:80 \
+          docker run -d --name smoke-test-app -p 8080:443 \
             ${{ secrets.DOCKERHUB_USERNAME }}/${{ secrets.DOCKERHUB_IMAGE_NAME }}:${{ needs.build-and-push.outputs.image_tag }}
 
       - name: Wait for container to be ready
@@ -162,12 +161,13 @@ jobs:
             exit 1
           fi
 
+      # Passing -k/--insecure flags since the container utilizes localhost self-signed certificates
       - name: Curl the app to confirm it responds
         run: |
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080)
+          STATUS=$(curl -k -s -o /dev/null -w "%{http_code}" https://localhost:8080)
           echo "HTTP Status: $STATUS"
           if [ "$STATUS" != "200" ]; then
-            echo "App did not respond with 200!"
+            echo "App did not respond with 200 over HTTPS!"
             docker logs smoke-test-app
             exit 1
           fi
@@ -234,38 +234,32 @@ jobs:
             docker stop my-production-app || true
             docker rm my-production-app || true
 
-            # 4. Spin up the container on port 8080 internally for host Nginx
+            # 4. Spin up container on port 8080 targeting inner port 443
             docker run -d \
               --name my-production-app \
-              -p 127.0.0.1:8080:80 \
+              -p 127.0.0.1:8080:443 \
               --restart always \
               ${{ secrets.DOCKERHUB_USERNAME }}/${{ secrets.DOCKERHUB_IMAGE_NAME }}:${{ needs.build-and-push.outputs.image_tag }}
 
             # 5. Wait briefly then verify it's actually running
             sleep 5
             if [ "$(docker inspect -f '{{.State.Running}}' my-production-app)" != "true" ]; then
-              echo " Production container failed to start!"
+              echo "Production container failed to start!"
               docker logs my-production-app
               exit 1
             fi
 
-            # 6. Confirm it's actually responding on the expected port
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8080)
+            # 6. Confirm it's responding on internal port 8080 via HTTPS
+            STATUS=$(curl -k -s -o /dev/null -w "%{http_code}" https://127.0.0.1:8080)
             echo "App HTTP Status: $STATUS"
             if [ "$STATUS" != "200" ]; then
-              echo " App is not responding with 200!"
+              echo "App is not responding with 200!"
               docker logs my-production-app
               exit 1
             fi
-      - name: Nginx installation
-        run: |
-           sudo apt update
-           sudo apt install -y nginx
 
-            # 7. Clean up old image assets to protect storage limits
+            # 7. Clean up host Nginx packages, image history, and log out securely
+            sudo apt update && sudo apt install -y nginx
             docker image prune -f
-
-            # 8. Log out of Docker Hub for hygiene
             docker logout
-
             echo "✅ Deployment completed and verified running!"
