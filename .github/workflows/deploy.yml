@@ -572,7 +572,7 @@ jobs:
 
 
              # 4. Spin up the container on port 8080 internally for host Nginx
-            sudo docker run -d \
+             sudo docker run -d \
               --name my-production-app \
               -p 127.0.0.1:8080:80 \
               --restart always \

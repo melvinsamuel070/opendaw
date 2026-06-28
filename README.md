@@ -1,257 +1,422 @@
-<p align="center">
-  <img src="https://raw.githubusercontent.com/andremichelle/openDAW/refs/heads/main/packages/app/studio/public/favicon.svg" height="120"/>
-  <h1 align="center">openDAW</h1>
-</p>
+Here is the beautifully organized breakdown of your project deployment workflow, split into two separate, highly polished parts:
 
-<p align="center">
-<a href="https://www.gnu.org/licenses/agpl-3.0.html" rel="nofollow"><img src="https://img.shields.io/badge/license-AGPLv3-blue.svg" alt="License: AGPLv3"></a>
-<a href="https://discord.gg/ZRm8du7vn4" rel="nofollow"><img src="https://img.shields.io/discord/1241019312328675399?label=Discord&logo=discord&logoColor=white" alt="discord server"></a>
-<a href="https://github.com/andremichelle/opendaw" rel="nofollow"><img src="https://img.shields.io/github/stars/andremichelle/opendaw" alt="stars"></a>
-</p>
-
-**openDAW** is a next-generation web-based Digital Audio Workstation (DAW) designed to **democratize** music production
-and to **resurface the process of making music** by making **high-quality** creation tools accessible to everyone, with
-a strong focus on **education** and data-privacy.
-
-Subscribe to our [Newsletter](https://buttondown.com/opendaw) for regular updates.
-
-<p align="center">
-<img src="https://raw.githubusercontent.com/andremichelle/openDAW/main/assets/studio-teaser.png"/>
-</p>
+1. **`README.md`**: A detailed, step-by-step engineering document optimized for developers and operations teams reading your repository.
+2. **LinkedIn Article**: An engaging, story-driven technical post designed to hook engineering peers, highlight your expertise, and share practical architectural insights.
 
 ---
 
-## Open-Source
+# Part 1: The Documentation (`README.md`)
 
-We are committed to transparency and community-driven development.
+```markdown
+# openDAW: Enterprise CI/CD Deployment with Cross-Origin Isolation
 
-The source code for openDAW is available under **AGPL v3 (or later)**
-
-### Built on Trust and Transparency
-
-**openDAW stands for radical simplicity and respect.**
-
-- **No SignUp**
-- **No Tracking**
-- **No Cookie Banners**
-- **No User Profiling**
-- **No Terms & Conditions**
-- **No Ads**
-- **No Paywalls**
-- **No Data Mining**
+This repository contains the infrastructure-as-code (IaC) files and automated GitHub Actions CI/CD workflows required to test, containerize, provision, and deploy **openDAW** from local development to an AWS EC2 production environment.
 
 ---
 
-## Looking for Contributors
+## 🏗️ Architectural Overview
 
-We welcome contributions that follow the existing style and conventions of the project. AI-assisted code is fine, but
-every contributor must **understand every line of code they submit**. If you use AI tools, please document your process
-in [`/plans`](https://github.com/andremichelle/openDAW/tree/main/plans). Keep pull requests small and focused. Large
-PRs will not be reviewed. Split big contributions into smaller commits that add requirements gradually and maintain
-operations of the app.
-
-If you are interested in helping, here are areas where we need support:
-
-1. **Offline App** — e.g. wrapping openDAW with [Tauri](https://tauri.app/) for a native desktop experience
-2. **PWA** — turning openDAW into a fully installable Progressive Web App with offline support
-3. **Timeline Track Management** — design and UX help for track layout, ordering, grouping, and interaction
-
-We always appreciate help on open issues: https://github.com/andremichelle/openDAW/issues
-
-To discuss contributions, book a call: https://calendly.com/andremichelle/opendaw-on-tour
+This setup uses a modern, production-grade deployment model:
+* **Infrastructure Management:** Provisioned via HashiCorp Terraform using remote S3 state storage.
+* **Pipeline Automation:** GitHub Actions handles compilation checks, multi-stage Docker image builds, automated smoke testing, and continuous deployment via SSH.
+* **Security Context (Critical):** Enforces **Cross-Origin-Opener-Policy (COOP)** and **Cross-Origin-Embedder-Policy (COEP)** to securely unlock browser capabilities like multi-threaded web workers (`SharedArrayBuffer`), while avoiding infinite loading locks via custom reverse-proxy header stripping.
 
 ---
 
-## Huge Shoutout To The Incredible openDAW Community!
+## 🛠️ Step 1: Local Environment Setup
 
-To everyone who has contributed feedback, reported bugs, suggested improvements, or helped spread the word — thank you!
-Your support is shaping openDAW into something truly powerful!
+Before moving your code to production, use this routine to verify dependencies and manage local SSL/TLS configurations.
 
-Thank
-you [@ccswdavidson](https://github.com/ccswdavidson), [@Chaosmeister](https://github.com/Chaosmeister), [@jeffreylouden](https://github.com/jeffreylouden), [@solsos](https://github.com/solsos), [@TheRealSyler](https://github.com/TheRealSyler), [@Trinitou](https://github.com/Trinitou),
-and [@xnstad](https://github.com/xnstad) for testing the repositories and identifying issues during the installation of
-openDAW!
+### 1. Install Node.js (v23)
+Manage runtime versions cleanly using Fast Node Manager (`fnm`):
+```bash
+# Install and switch to Node 23
+fnm install 23
+fnm use 23
 
-Special shout-out to the biggest bug
-hunters: [kanaris](https://kanaris.net/), [@Chaosmeister](https://github.com/Chaosmeister)
-and [BeatMax Prediction](https://linktr.ee/beatmax_prediction). Your relentless attention to detail made a huge
-difference!
+# Set as default for future shell sessions (Optional)
+fnm default 23
 
-Huge thanks to our [ambassadors](https://opendaw.org/ambassadors), whose dedication and outreach amplify our mission!
+```
 
-## And big hugs to all our supporters!
+### 2. Configure Local Certificates (`mkcert`)
 
-### openDAW Visionary — $25.00
+Advanced browser APIs require HTTPS even on `localhost`. Use `mkcert` to generate zero-config local development certificates:
 
-Stephen Tai, Pathfinder, One Sound Every Day (santino), kanaris, Oli Larkin, [@Robert Anthony](https://github.com/RobertAnthonyDevelopment)
+```bash
+# Update and install system prerequisites
+sudo apt update && sudo apt install mkcert libnss3-tools -y
 
-### openDAW Supporter — $5.00
+# Install the local root CA into your system trust stores
+mkcert -install
 
-Cal Lycus, Jetdarc, Truls Enstad, Polarity, Ynot Etluhcs, Mats Gisselson, Ola, SKYENCE, BeatMax_Prediction, Kim T,
-Nyenoidz, Steve Meiers, 4ohm, Yito, Shawn Lukas, Tommes, David Thompson, Harry Gillich, OxVolt, Wojciech Miłkowski,
-skyboundzoo, JHINZ, Mark Dammer, fork-kun, Martin Eigel
+# Initialize development certificates within your repository context
+npm run cert
 
----
+```
 
-### openDAW Devices
+### 3. Build the Application Localy
 
-#### Stock Plugins
+```bash
+# Clean up existing build files if necessary
+npm run clean
 
-* Apparat (programmable instrument scripted in JavaScript)
-* Arpeggio (plays the notes of a chord one after another)
-* Cheap Reverb (FreeVerb variation)
-* Crusher (degenerates audio signal)
-* Dattorro Reverb (dense algorithmic reverb based on Dattorro's design)
-* Delay (stereo delay with cross and filter options)
-* Fold (waveform folding algorithm with oversampling)
-* Gate (noise gate with sidechain support)
-* Maximizer (brickwall limiter with automatic makeup gain)
-* MIDI Output (sends MIDI messages to other devices)
-* Nano (nano sampler for a single audio file)
-* Pitch (offsets midi note pitches)
-* Playfield (sample drum computer with individual effect chains)
-* Revamp (graphical equalizer with spectrum analyser)
-* Soundfont (soundfont player)
-* Spielwerk (programmable MIDI effect scripted in JavaScript)
-* Stereo Tool (volume, panning and invert the stereo signal)
-* Tape (playback device for audio regions and clips)
-* Tidal (shapes rhythm and space through volume and pan)
-* Tone3000 (amplifier and effects modeling via Neural Amp Modeler)
-* Vaporisateur (subtractive synth with classical waveforms)
-* Velocity (manipulates velocities of incoming notes)
-* Vocoder (analysis/synthesis vocoder)
-* Waveshaper (nonlinear waveshaping distortion)
-* Werkstatt (programmable audio effect scripted in JavaScript)
-* Zeitgeist (transforms time)
+# Install monorepo workspaces dependencies and run compilation
+npm install
+npm run build
 
-#### Ported Plugins (Excluded in commercial license)
-
-* [Compressor](https://github.com/p-hlp/CTAGDRC) (CTAG Dynamic Range Compressor)
-
-### Repositories
-
-* [openDAW](https://github.com/andremichelle/opendaw)
-* [openDAW-headless (SDK)](https://github.com/andremichelle/opendaw-headless)
-* [openDAW-headless @naomiaro](https://github.com/naomiaro/opendaw-test) (openDAW-headless fork with more docs and
-  examples)
-
-### Roadmap
-
-This roadmap represents an estimation of the upcoming development steps. Timelines and priorities may shift as openDAW
-evolves.
-
-#### 2025/Q4
-
-- [X] Preset API
-- [X] Full implementation of connecting several cloud services to store samples, projects, and presets
-- [X] Implement audio playback algorithms (pitch, stretch, absolute) including interpolation
-
-#### 2026/Q1
-
-- [X] Fade-in and out on audio-regions
-- [X] Signature automation track
-- [X] Tempo automation track
-- [X] Fine-tune recording including loops (takes)
-
-#### 2026/Q2
-
-- [ ] WASM Audio-Engine
-- [ ] Polish UI
-
-#### 2026/Q3
-
-- [ ] Testing & QA
-- [ ] [Launch 1.0](https://opendaw.org/release26/)
-
-For more issues and feature requests, visit [github.com/andremichelle/opendaw/issues/](https://github.com/andremichelle/opendaw/issues/)
-
-### Prepare, Clone, Installation, and Run
-
-openDAW tries to avoid external libraries and frameworks. The following is a list of the external libraries we currently
-use in the web studio:
-
-* [jszip](https://www.npmjs.com/package/jszip) (for openDAW project bundle file)
-* [markdown-it](https://www.npmjs.com/package/markdown-it) + [markdown-it-table](https://www.npmjs.com/package/markdown-it-table) (
-  for help pages)
-* [d3-force](https://d3js.org/d3-force) (for graph debugging)
-* [soundfont2](https://github.com/Mrtenz/soundfont2) (for soundfont loading)
-* [zod](https://zod.dev) (schema validation)
-* [ffmpeg](https://github.com/ffmpegwasm/ffmpeg.wasm) (decoding/encoding)
-
-Before starting, ensure you have the following installed on your system:
-
-- [Git](https://git-scm.com/) is required for cloning the repository and managing submodules.
-- [mkcert](https://github.com/FiloSottile/mkcert#installation) is required to create a certificate for developing with
-  https protocol.
-- [Node.js](nodejs.org) version **>= 23**. This is necessary for running the development server and installing
-  dependencies.
-- [Sass](https://sass-lang.com/) While Sass is handled internally during the development process, you will need to
-  ensure you have the
-  binaries available in your environment if used outside the build system.
-- [TypeScript](https://www.typescriptlang.org/)
-- [OpenSSL](https://openssl-library.org/) For generating local development certificates (), OpenSSL needs to be
-  installed on
-  your system. Most Linux/macOS systems have OpenSSL pre-installed.
-
-### Clone
-
-`git clone https://github.com/andremichelle/opendaw.git && cd opendaw`
-
-### Installation
-
-* `npm run cert` (only for the very first time)
-* `npm run clean` (to revert to clean slate, removes all `node_modules` and `dist` folders)
-* `npm install` (for the first time and after `npm run clean`)
-* `npm run build` (for the first time and after `npm run clean`)
-* `npm run dev:studio` | `npm run dev:headless` (start dev server)
-* Navigate to https://localhost:8080 (port is important > cors sample api)
-
-### Flow Charts
-
-<img width="6551" height="7057" alt="image" src="https://github.com/user-attachments/assets/266a9fb2-4b72-4752-bcf1-85fda2ff2cf1" />
+```
 
 ---
 
-[![Custom Caption: Watch the Demo](https://img.youtube.com/vi/VPTXeJY6Eaw/0.jpg)](https://www.youtube.com/watch?v=VPTXeJY6Eaw)
+## 📦 Step 2: Production Containerization
 
-Watch Polarity's Video *"there's a new FREE DAW in town"*
+openDAW uses a **multi-stage Dockerfile** to minimize the attack surface and reduce production image footprints down to raw static delivery assets.
 
-## Links
+### The Production `Dockerfile`
 
-* [opendaw.studio (prototype)](https://opendaw.studio)
-* [opendaw.org (website)](https://opendaw.org)
-* [openDAW on Discord](https://discord.opendaw.studio)
-* [openDAW SDK](https://www.npmjs.com/org/opendaw)
-* [LinkedIn](https://www.linkedin.com/company/opendaw-org/)
-* [Instagram](https://www.instagram.com/opendaw.studio)
+```dockerfile
+# --- Stage 1: Build Environment (Temporary) ---
+FROM node:23-slim AS builder
 
-## Contributions
+# Install system utilities needed for building audio core packages
+RUN apt-get update && apt-get install -y \
+    git \
+    openssl \
+    python3 \
+    make \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
 
-### Icons
+WORKDIR /app
 
-* "Wave" by Gregor Cresnar
-  from [Noun Project](https://thenounproject.com/icon/wave-6250020/) (CC BY 3.0)
-* "Compress" by Gregor Cresnar
-  from [Noun Project](https://thenounproject.com/browse/icons/term/compress/) (CC BY 3.0)
-* "Waveforms" by [Austin Andrews](https://github.com/Templarian/MaterialDesign)
-* "futurism" by Martin Königsmann from [Noun Project](https://thenounproject.com/icon/futurism-4565401/)
-* "tape reel" by Evgeny Filatov from [thenounproject](https://thenounproject.com/icon/tape-reel-2216293/)
+# Copy the entire monorepo so npm workspaces can resolve all internal package links
+COPY . .
 
-## Dual-Licensing Model
+# Install the monorepo dependencies
+RUN npm install
 
-openDAW is available **under two alternative license terms**:
+# Build only the studio app and its actual dependency graph
+RUN npx turbo run build --filter=@opendaw/app-studio
 
-| Option                    | When to choose it                                                                                                    | Obligations                                                                                                                                                                                                                                                       |
-|---------------------------|----------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **A. AGPL v3 (or later)** | You are happy for the entire work that includes openDAW to be released under AGPL-compatible open-source terms.      | – Must distribute complete corresponding source code under AGPL.<br>– Must keep copyright & licence notices.<br>– Applies both to distribution **and** to public use via network/SaaS (§13).<br>– May run openDAW privately in any software, open or closed (§0). |
-| **B. Commercial Licence** | You wish to incorporate openDAW into **closed-source** or otherwise licence-incompatible software or SaaS offerings. | – Pay the agreed fee.<br>– No copyleft requirement for your own source code.<br>– Other terms as per the signed agreement.                                                                                                                                        |
+# --- Stage 2: Production Web Server (Final Image) ---
+FROM nginx:alpine AS runner
 
-> **How to obtain the Commercial License**  
-> Email `andre.michelle@opendaw.org` with your company name, product description, and expected distribution volume.
+# Copy the statically compiled bundle out of the builder stage
+COPY --from=builder /app/packages/app/studio/dist /usr/share/nginx/html
 
-If you redistribute or run modified versions of openDAW for public use **without** a commercial license, the AGPL v3
-terms apply automatically.
+# Bake in the local Nginx config (COOP/COEP headers, SPA routing, MIME types)
+COPY nginx.conf /etc/nginx/conf.d/default.conf
 
-## License
+# Expose HTTP port (SSL is terminated by host-level Nginx/Certbot in production)
+EXPOSE 80
 
-[AGPL v3 (or later)](https://www.gnu.org/licenses/agpl-3.0.txt) © 2025 André Michelle
+CMD ["nginx", "-g", "daemon off;"]
+
+```
+
+### Local / Container-Level `nginx.conf`
+
+Create this file in your root workspace. Note that it explicitly enforces isolation fallback modes:
+
+```nginx
+server {
+    listen 80;
+    server_name localhost;
+
+    # 🚀 Enforce baseline cross-origin security context inside the container
+    add_header Cross-Origin-Opener-Policy "same-origin" always;
+    add_header Cross-Origin-Embedder-Policy "require-corp" always;
+
+    root /usr/share/nginx/html;
+    index index.html;
+    include /etc/nginx/mime.types;
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    client_max_body_size 50M;
+}
+
+```
+
+---
+
+## 🤖 Step 3: CI/CD Pipeline Automation (`.github/workflows/deploy.yml`)
+
+The complete workflow executes automatically on every `push` to the `master` branch. It runs a modular 5-tier pipeline layout:
+
+```yaml
+name: Build, Test, Push & Deploy openDAW
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  # 1. Verification Phase1
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '23'
+      - run: npm install
+      - run: npm run build
+      - run: npm test --if-present
+
+  # 2. Immutable Asset Pipeline
+  build-and-push:
+    runs-on: ubuntu-latest
+    needs: test
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: meta
+        run: echo "tag=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ secrets.DOCKERHUB_IMAGE_NAME }}:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ secrets.DOCKERHUB_IMAGE_NAME }}:${{ steps.meta.outputs.tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # 3. Quality Assurance Tier
+  smoke-test:
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    steps:
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Pull and run image locally
+        run: |
+          docker run -d --name smoke-test-app -p 8080:80 \
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ secrets.DOCKERHUB_IMAGE_NAME }}:${{ needs.build-and-push.outputs.image_tag }}
+      - run: sleep 5
+      - name: Check container health status
+        run: |
+          if [ "$(docker inspect -f '{{.State.Running}}' smoke-test-app)" != "true" ]; then
+            echo "Container exited unexpectedly!"
+            docker logs smoke-test-app
+            exit 1
+          fi
+      - name: Verify application endpoint response
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080)
+          echo "HTTP Status: $STATUS"
+          if [ "$STATUS" != "200" ]; then
+            echo "App did not respond with 200!"
+            docker logs smoke-test-app
+            exit 1
+          fi
+      - name: Tear Down Container
+        if: always()
+        run: docker stop smoke-test-app && docker rm smoke-test-app
+
+  # 4. Declarative Infrastructure Provisioning
+  terraform:
+    runs-on: ubuntu-latest
+    needs: smoke-test
+    outputs:
+      ec2_ip: ${{ steps.tf_output.outputs.ip }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+      - uses: hashicorp/setup-terraform@v3
+      - name: Terraform Init
+        working-directory: ./terraform-ec2
+        run: terraform init -input=false
+      - name: Terraform Apply
+        working-directory: ./terraform-ec2
+        run: terraform apply -auto-approve -input=false -var="instance_name=opendaw-production-ec2"
+      - name: Get EC2 IP from Output
+        id: tf_output
+        working-directory: ./terraform-ec2
+        run: |
+          IP=$(terraform output -raw instance_public_ip)
+          echo "ip=$IP" >> "$GITHUB_OUTPUT"
+
+  # 5. Continuous CD Rollout
+  deploy:
+    runs-on: ubuntu-latest
+    needs: [build-and-push, terraform]
+    steps:
+      - name: Setup DuckDNS Dynamic IP Updater
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ needs.terraform.outputs.ec2_ip }}
+          username: ubuntu
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            mkdir -p ~/duckdns
+            cat > ~/duckdns/duck.sh <<'EOF'
+            echo url="[https://www.duckdns.org/update?domains=$](https://www.duckdns.org/update?domains=$){{ secrets.DUCKDNS_SUBDOMAIN }}&token=${{ secrets.DUCKDNS_TOKEN }}&ip=" | curl -k -o ~/duckdns/duck.log -K -
+            EOF
+            chmod 700 ~/duckdns/duck.sh
+            ~/duckdns/duck.sh
+            CRON_JOB="*/5 * * * * ~/duckdns/duck.sh >/dev/null 2>&1"
+            ( crontab -l 2>/dev/null | grep -v -F "duck.sh" ; echo "$CRON_JOB" ) | crontab -
+
+      - name: SSH into Instance & Deploy App
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ needs.terraform.outputs.ec2_ip }}
+          username: ubuntu
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            # Validate cloud-init/Docker dependencies are active
+            for i in {1..30}; do
+              if command -v docker &> /dev/null && sudo systemctl is-active --quiet docker; then
+                break
+              fi
+              sleep 5
+            done
+
+            echo "${{ secrets.DOCKERHUB_TOKEN }}" | sudo docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+            sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/${{ secrets.DOCKERHUB_IMAGE_NAME }}:${{ needs.build-and-push.outputs.image_tag }}
+            sudo docker stop my-production-app || true
+            sudo docker rm my-production-app || true
+            
+            # Run application instance mapped locally for Host Nginx access
+            sudo docker run -d --name my-production-app -p 127.0.0.1:8080:80 --restart always \
+              ${{ secrets.DOCKERHUB_USERNAME }}/${{ secrets.DOCKERHUB_IMAGE_NAME }}:${{ needs.build-and-push.outputs.image_tag }}
+            
+            sudo docker image prune -f
+            sudo docker logout
+
+```
+
+---
+
+## 🔐 Step 4: Required GitHub Repository Secrets
+
+To execute the pipeline, configure these keys in your GitHub repository under **Settings ➔ Secrets and variables ➔ Actions**:
+
+| Secret Key Name | Context / Value Purpose |
+| --- | --- |
+| `DOCKERHUB_USERNAME` | Your individual Docker Hub username identity. |
+| `DOCKERHUB_TOKEN` | Docker Hub Account Settings ➔ Personal Access Token (PAT). |
+| `DOCKERHUB_IMAGE_NAME` | Desired container repository moniker (e.g., `opendaw-studio`). |
+| `AWS_ACCESS_KEY_ID` | IAM User programmatic access credential credentials. |
+| `AWS_SECRET_ACCESS_KEY` | IAM User secure signature block entry. |
+| `AWS_REGION` | Core targeted execution zone (e.g., `us-east-1`). |
+| `SSH_PRIVATE_KEY` | Contents of your private SSH identity key pair file (`.pem`). |
+| `DUCKDNS_SUBDOMAIN` | Custom name chosen for your duckdns setup tracker. |
+| `DUCKDNS_TOKEN` | Security access string assigned from the DuckDNS platform profile. |
+
+---
+
+## 🏛️ Step 5: Manual Host Configuration & Edge Optimization
+
+While infrastructure provisioning is automated, edge security handling and production SSL termination are configured directly on the host to avoid transient workflow friction.
+
+### 1. Configure Local Infrastructure Code Variable Fallbacks
+
+Ensure your local root variables in `variables.tf` contain valid configurations:
+
+```hcl
+variable "aws_region" {
+  type    = string
+  default = "us-east-1"
+}
+
+variable "key_name" {
+  type    = string
+  default = "git1"  # Replace with your actual AWS keypair assignment name
+}
+
+```
+
+*Note: Ensure your `locals.tf` includes accurate AMI assignments:*
+
+```hcl
+locals {
+  ami_map = {
+    x86 = "ami-091138d0f0d41ff90"
+    arm = "ami-07ad186bc37b8dac4"
+  }
+  ami_id = local.ami_map[var.architecture]
+}
+
+```
+
+### 2. Configure Host Nginx Config Edge Block
+
+SSH directly into your provisioned public EC2 host instance and generate a clean Virtual Host layout:
+
+```bash
+sudo nano /etc/nginx/sites-available/opendaw
+
+```
+
+Paste the following refined edge block. Notice the inclusion of `proxy_hide_header`. This strips any default security parameters emitted by the upstream application container, replacing them cleanly with **`credentialless`** rules to protect multi-threaded scripts from infinite caching loops or asset blocks:
+
+```nginx
+server {
+    listen 80;
+    server_name samu070.duckdns.org; # 👈 Replace with your custom domain configuration
+
+    location / {
+        proxy_pass [http://127.0.0.1:8080](http://127.0.0.1:8080);
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # 🛑 STRIP DUPLICATE HEADERS COMING FROM INTERNAL DOCKER CONTAINER
+        proxy_hide_header Cross-Origin-Opener-Policy;
+        proxy_hide_header Cross-Origin-Embedder-Policy;
+
+        # 🚀 INJECT CLEAN PRODUCTION REVERSE-PROXY OVERRIDES
+        add_header Cross-Origin-Opener-Policy "same-origin" always;
+        add_header Cross-Origin-Embedder-Policy "credentialless" always; 
+    }
+
+    client_max_body_size 50M;
+}
+
+```
+
+### 3. Initialize Server Routing & SSL Automation
+
+Execute the layout migration routines to enable the web block:
+
+```bash
+# Link your configuration block into the active execution path
+sudo ln -s /etc/nginx/sites-available/opendaw /etc/nginx/sites-enabled/
+sudo rm -f /etc/nginx/sites-enabled/default
+
+# Confirm configuration context syntax and refresh system engines
+sudo nginx -t
+sudo systemctl restart nginx
+
+# Install Certbot automation tools and bind live Let's Encrypt SSL
+sudo apt install -y certbot python3-certbot-nginx 
+sudo certbot --nginx -d samu070.duckdns.org
+
+```
+
+Your enterprise application platform configuration is now up, verified, and secured under strict cross-origin isolation context rules!
+
